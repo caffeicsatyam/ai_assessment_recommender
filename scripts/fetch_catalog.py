@@ -1,10 +1,3 @@
-"""
-One-time script to fetch the SHL product catalog from the remote API.
-Run this once to download the initial data file.
-
-Usage:
-    python scripts/fetch_catalog.py
-"""
 import json
 import requests
 

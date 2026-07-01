@@ -26,9 +26,7 @@ def chat(request: ChatRequest) -> ChatResponse:
     reply, recommendations, end = generate_response(messages)
 
     return ChatResponse(
-        conversation_id=request.conversation_id or "default",
         reply=reply,
         recommendations=recommendations,
         end_of_conversation=end,
-        required_fields=[],
     )

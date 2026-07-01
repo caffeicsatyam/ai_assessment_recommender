@@ -78,15 +78,11 @@ def parse_duration(duration_str: str) -> int:
         return int(match.group(0))
     return 0
 
-def make_recommendation(record: CatalogRecord, reason: str) -> dict:
+def make_recommendation(record: CatalogRecord) -> dict:
     return {
-        "id": record.entity_id,
         "name": record.name,
         "url": record.link,
         "test_type": record.test_type or "K",
-        "duration": parse_duration(record.duration),
-        "remote_testing": record.remote.lower() == "yes" if record.remote else True,
-        "reason": reason
     }
 
 def extract_context(messages: list[dict]) -> tuple[list[str], list[str]]:
@@ -189,6 +185,11 @@ def format_candidates(candidates: list[CatalogRecord]) -> str:
     return "\n".join(parts)
 
 def generate_response(messages: list[dict]) -> tuple[str, list[dict], bool]:
+    # Count assistant turns to enforce turn cap
+    assistant_turns = sum(1 for m in messages if m["role"] == "assistant")
+    user_turns = sum(1 for m in messages if m["role"] == "user")
+    current_turn = assistant_turns + 1  # the turn we are about to produce
+
     # 1. Extract queries and previously recommended products
     queries, prev_items = extract_context(messages)
     
@@ -200,27 +201,45 @@ def generate_response(messages: list[dict]) -> tuple[str, list[dict], bool]:
     convo = ""
     for msg in messages:
         convo += f"{msg['role'].upper()}: {msg['content']}\n"
-        
-    system_instruction = """You are an expert AI recruiting and assessment coordinator recommending assessments from the SHL product catalog.
+
+    # Determine if this is the forced final turn
+    is_final_turn = current_turn >= 8
+
+    system_instruction = f"""You are an expert AI recruiting and assessment coordinator recommending assessments from the SHL product catalog.
 Your goal is to build a shortlist of 1 to 10 assessments matching the hiring manager's requirements.
 
-Follow these strict rules:
+Current assistant turn number: {current_turn} of 8 maximum.
+
+Follow these strict rules in priority order:
+
+0. OFF-TOPIC RULE (HIGHEST PRIORITY):
+   - You ONLY help with HR, hiring, recruiting, talent assessment, and skills evaluation topics.
+   - If the user asks about anything unrelated (e.g. coding help, recipes, weather, jokes, general knowledge), politely refuse and steer back: "I'm an SHL assessment recommendation assistant. I can only help you find the right hiring assessments. Could you tell me about the role you're hiring for?"
+   - Set `recommendations` to `[]` and `end_of_conversation` to `false`.
+
 1. CLARIFICATION RULE:
-   - If the user has NOT provided enough context to make a specific recommendation (e.g. they haven't specified the role seniority/level, language requirements, accent preferences for voice tests, or what specific skills to assess), do NOT recommend any products yet.
-   - Instead, ask 1 or 2 targeted clarifying questions to narrow down the requirements. Set `recommendations` to an empty list `[]` and `end_of_conversation` to `false`.
-   - Examples of clarifying: "What language are the calls in?", "Is the seniority level closer to a senior IC or a tech lead?".
+   - If the user has NOT provided enough context to make a specific recommendation (e.g. they haven't specified the role, seniority/level, or what specific skills to assess), do NOT recommend any products yet.
+   - On the FIRST user message especially: if the query is vague or broad (e.g. "I need some assessments", "help me hire"), you MUST ask clarifying questions and return an empty recommendations list. NEVER recommend on turn 1 for vague queries.
+   - Ask 1 or 2 targeted clarifying questions to narrow down the requirements.
+   - Set `recommendations` to an empty list `[]` and `end_of_conversation` to `false`.
 
 2. SHORTLIST SELECTION RULE:
    - When you have enough context, select a list of 1 to 10 appropriate assessments from the Candidate Products list.
-   - For each recommended product, write a clear, personalized explanation (`reason`) of why it fits this role and level (e.g., "Advanced covers concurrency and JVM internals which fits a senior microservices engineer").
    - You can ONLY recommend products that are explicitly listed in the Candidate Products. Do not hallucinate product names or IDs.
-   - Maintain state: if the user asks to add or drop products, modify the previous list of recommended products accordingly. Keep other recommended products unless they were dropped.
+   - STRICTLY honor user edits: if the user asks to add a product, add it to the existing list. If the user asks to drop/remove a product, remove ONLY that product and keep all others unchanged. If the user asks to replace a product, remove the old one and add the new one.
+   - When the user asks for modifications, always carry forward the full previous shortlist with only the requested changes applied.
 
-3. CONVERSATION END RULE:
+3. TURN CAP RULE:
+   - You have a maximum of 8 assistant turns for the entire conversation.
+   - Current turn: {current_turn}/8.
+   - If this is turn 7 or 8: you MUST provide your best shortlist of recommendations based on whatever information you have so far. Do NOT ask more clarifying questions. Set `end_of_conversation` to `true` if this is turn 8.
+   - {"THIS IS THE FINAL TURN (turn 8). You MUST output your best recommendation shortlist NOW and set end_of_conversation to true. Do NOT ask questions." if is_final_turn else ""}
+
+4. CONVERSATION END RULE:
    - When the user confirms they are satisfied with the shortlist (e.g., "Perfect", "That works", "Confirmed", "Locking it in"), set `end_of_conversation` to `true` and output the final shortlist.
-   - Otherwise, set `end_of_conversation` to `false`.
+   - Otherwise, set `end_of_conversation` to `false` (unless forced by turn cap).
 
-4. OUTPUT FORMAT:
+5. OUTPUT FORMAT:
    - You must output valid JSON matching the schema below.
    - Do NOT include markdown tables in your conversational `reply` text. Keep the `reply` conversational.
 """
@@ -232,12 +251,11 @@ Follow these strict rules:
         {convo}
 
         Please analyze the conversation and output your decision as JSON with the following schema:
-        {{
+         {{
         "reply": "Conversational reply text to the user",
         "recommendations": [
             {{
-            "entity_id": "product entity ID",
-            "reason": "personalized explanation of why this product fits"
+            "entity_id": "product entity ID"
             }}
         ],
         "end_of_conversation": true/false
@@ -262,10 +280,9 @@ Follow these strict rules:
                             "items": {
                                 "type": "OBJECT",
                                 "properties": {
-                                    "entity_id": {"type": "STRING"},
-                                    "reason": {"type": "STRING"}
+                                    "entity_id": {"type": "STRING"}
                                 },
-                                "required": ["entity_id", "reason"]
+                                "required": ["entity_id"]
                             }
                         }
                     },
@@ -283,13 +300,17 @@ Follow these strict rules:
         recommendations = []
         for item in rec_items:
             eid = item.get("entity_id")
-            reason = item.get("reason", "")
             if eid in catalog:
                 rec_record = catalog[eid]
-                rec_dict = make_recommendation(rec_record, reason)
+                rec_dict = make_recommendation(rec_record)
                 recommendations.append(rec_dict)
+
+        # Hard Python-level turn cap safety net
+        if is_final_turn:
+            end_of_conversation = True
                 
         return reply, recommendations, end_of_conversation
     except Exception as e:
         print(f"Error generating response: {e}")
         return "Sorry, I encountered an error while processing your request. Please try again.", [], False
+

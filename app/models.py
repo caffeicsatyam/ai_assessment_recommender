@@ -8,24 +8,17 @@ class Message(BaseModel):
     content: str
 
 class ChatRequest(BaseModel):
-    conversation_id: Optional[str] = None
     messages: List[Message]
 
 class Recommendation(BaseModel):
-    id: str
     name: str
     url: str
     test_type: str
-    duration: int
-    remote_testing: bool
-    reason: str
 
 class ChatResponse(BaseModel):
-    conversation_id: str
     reply: str
     recommendations: List[Recommendation]
     end_of_conversation: bool = False
-    required_fields: List[str] = []
 
 
 
