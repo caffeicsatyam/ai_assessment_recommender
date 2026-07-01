@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+pytest
+google-genai
+faiss-cpu
+numpy
+python-dotenv
