@@ -91,15 +91,24 @@ def extract_context(messages: list[dict]) -> tuple[list[str], list[str]]:
         convo += f"{msg['role'].upper()}: {msg['content']}\n"
         
     prompt = f"""You are analyzing a conversation between a user and an AI recruiter hiring coordinator.
-Based on the conversation history below:
-1. Extract 1 to 3 search queries (key skills, technologies, or job roles) to find new candidate assessments in the catalog.
+Based on the conversation history below, do the following:
+
+1. Generate 3 to 10 targeted search queries to find relevant SHL assessments in the catalog.
+   - Expand the role into specific skills and tools that are typically required at that level.
+   - For example:
+     * "Senior Java Developer" → ["Java advanced programming", "Spring Boot microservices", "Docker Kubernetes", "software architecture", "OOP design patterns"]
+     * "Entry-level sales rep" → ["verbal communication", "customer service", "numerical reasoning", "personality sales"]
+     * "Data Scientist" → ["Python data analysis", "machine learning", "statistics", "SQL", "problem solving"]
+   - Always include the level as a qualifier (e.g., "advanced", "senior", "graduate") in at least one query.
+   - Include both technical skills and soft skill assessments appropriate for the role level.
+
 2. Identify and extract the exact `entity_id` or product names of any SHL assessments that were recommended/shortlisted by the assistant in the previous turns.
 
 Conversation:
 {convo}
 
 Output as JSON with keys:
-- "search_queries": list of strings (queries for searching catalog)
+- "search_queries": list of strings (role-expanded queries for searching catalog)
 - "previously_recommended_ids": list of strings (entity_ids or names of previously recommended products)
 """
     try:
@@ -171,10 +180,12 @@ def format_candidates(candidates: list[CatalogRecord]) -> str:
     parts = []
     for rec in candidates:
         keys_str = ", ".join(rec.keys)
+        job_levels_str = rec.job_levels_raw if rec.job_levels_raw else ", ".join(rec.job_levels) if rec.job_levels else "Not specified"
         parts.append(
             f"ID: {rec.entity_id}\n"
             f"Name: {rec.name}\n"
             f"Test Type: {rec.test_type}\n"
+            f"Job Levels: {job_levels_str}\n"
             f"Keys: {keys_str}\n"
             f"Duration: {rec.duration}\n"
             f"Languages: {rec.languages_raw}\n"
@@ -227,6 +238,7 @@ Follow these strict rules in priority order:
 2. SHORTLIST SELECTION RULE:
    - When you have enough context, select a list of 1 to 10 appropriate assessments from the Candidate Products list.
    - You can ONLY recommend products that are explicitly listed in the Candidate Products. Do not hallucinate product names or IDs.
+   - ALWAYS match the seniority/job level: each Candidate Product has a "Job Levels" field. Prefer products whose Job Levels match the user's requested level (e.g., if they ask for a "Senior" or "Manager" role, prefer products listed for "Mid-Professional", "Manager", or "Director" levels). For graduate/entry roles prefer "Entry-Level" or "Graduate" products.
    - STRICTLY honor user edits: if the user asks to add a product, add it to the existing list. If the user asks to drop/remove a product, remove ONLY that product and keep all others unchanged. If the user asks to replace a product, remove the old one and add the new one.
    - When the user asks for modifications, always carry forward the full previous shortlist with only the requested changes applied.
 
