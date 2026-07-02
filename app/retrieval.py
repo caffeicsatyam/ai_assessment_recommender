@@ -1,31 +1,17 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import faiss
 import numpy as np
-from google import genai
 
-_client = None
-
-def _get_client():
-    global _client
-    if _client is None:
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            try:
-                from dotenv import load_dotenv
-                from pathlib import Path as _Path
-                load_dotenv(_Path(__file__).resolve().parents[1] / ".env")
-                api_key = os.environ.get("GOOGLE_API_KEY")
-            except ImportError:
-                pass
-        _client = genai.Client(api_key=api_key)
-    return _client
+try:
+    from .llm_client import get_gemini_client as _get_client
+except ImportError:
+    from app.llm_client import get_gemini_client as _get_client
 
 try:
     from .models import CatalogRecord

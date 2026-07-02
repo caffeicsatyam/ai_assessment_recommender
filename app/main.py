@@ -30,3 +30,10 @@ def chat(request: ChatRequest) -> ChatResponse:
         recommendations=recommendations,
         end_of_conversation=end,
     )
+
+@app.middleware("http")
+async def log_raw_body(request, call_next):
+    if request.url.path == "/chat":
+        body = await request.body()
+        print(f"RAW BODY ({len(body)} bytes): {body[:300]}")
+    return await call_next(request)

@@ -24,7 +24,7 @@ import numpy as np
 
 from app.models import CatalogRecord
 from app.classify import classify
-import app.retrieval
+import app.llm_client
 from app.retrieval import CatalogIndex, _RECORDS_FILENAME, _INDEX_FILENAME
 
 DIM = 32
@@ -46,9 +46,9 @@ def fake_encode(texts: list[str]) -> np.ndarray:
     return np.stack(vecs)
 
 
-# Mock the client's embed_content inside retrieval.py
+# Mock the client's embed_content via the shared llm_client singleton
 mock_client = MagicMock()
-app.retrieval._client = mock_client
+app.llm_client._gemini_client = mock_client
 
 
 def mock_embed_content(model, contents, config=None):

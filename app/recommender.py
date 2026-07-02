@@ -1,82 +1,25 @@
+"""
+SHL Assessment Recommender — core business logic.
+
+Orchestrates: context extraction → candidate retrieval → LLM response
+generation. All LLM access goes through llm_client (with automatic
+Groq fallback), and all data access goes through data_loader.
+"""
+
 import json
-import os
-from pathlib import Path
-from typing import Optional
-from google import genai
-from google.genai import types
-import re
+import logging
 
 try:
     from .models import CatalogRecord
-    from .retrieval import CatalogIndex
+    from .llm_client import generate_with_fallback
+    from .data_loader import get_catalog, get_catalog_by_name, get_index
 except ImportError:
     from app.models import CatalogRecord
-    from app.retrieval import CatalogIndex
+    from app.llm_client import generate_with_fallback
+    from app.data_loader import get_catalog, get_catalog_by_name, get_index
 
-# Client lazy initialization
-_client = None
+logger = logging.getLogger(__name__)
 
-def get_client():
-    global _client
-    if _client is None:
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            try:
-                from dotenv import load_dotenv
-                load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-                api_key = os.environ.get("GOOGLE_API_KEY")
-            except ImportError:
-                pass
-        _client = genai.Client(api_key=api_key)
-    return _client
-
-#
-CATALOG_PATH = Path(__file__).resolve().parent.parent / "data" / "catalog_clean.json"
-INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "index_data"
-
-_catalog_by_id: dict[str, CatalogRecord] = {}
-_index: Optional[CatalogIndex] = None
-
-def get_catalog() -> dict[str, CatalogRecord]:
-    global _catalog_by_id
-    if not _catalog_by_id:
-        if CATALOG_PATH.exists():
-            with open(CATALOG_PATH, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            _catalog_by_id = {r["entity_id"]: CatalogRecord(**r) for r in raw}
-        else:
-            # Fallback
-            raw_path = Path(__file__).resolve().parent.parent / "data" / "shl_product_catalog.json"
-            if raw_path.exists():
-                with open(raw_path, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
-                from classify import classify
-                _catalog_by_id = {}
-                for r in raw:
-                    try:
-                        rec = classify(CatalogRecord(**r))
-                        _catalog_by_id[rec.entity_id] = rec
-                    except Exception:
-                        pass
-    return _catalog_by_id
-
-def get_catalog_by_name() -> dict[str, CatalogRecord]:
-    catalog = get_catalog()
-    return {rec.name.lower().strip(): rec for rec in catalog.values()}
-
-def get_index() -> CatalogIndex:
-    global _index
-    if _index is None:
-        _index = CatalogIndex.load(str(INDEX_PATH))
-    return _index
-
-def parse_duration(duration_str: str) -> int:
-    if not duration_str:
-        return 0
-    match = re.search(r'\d+', duration_str)
-    if match:
-        return int(match.group(0))
-    return 0
 
 def make_recommendation(record: CatalogRecord) -> dict:
     return {
@@ -84,6 +27,7 @@ def make_recommendation(record: CatalogRecord) -> dict:
         "url": record.link,
         "test_type": record.test_type or "K",
     }
+
 
 def extract_context(messages: list[dict]) -> tuple[list[str], list[str]]:
     convo = ""
@@ -112,35 +56,32 @@ Output as JSON with keys:
 - "previously_recommended_ids": list of strings (entity_ids or names of previously recommended products)
 """
     try:
-        client = get_client()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "search_queries": {
-                            "type": "ARRAY",
-                            "items": {"type": "STRING"}
-                        },
-                        "previously_recommended_ids": {
-                            "type": "ARRAY",
-                            "items": {"type": "STRING"}
-                        }
+        response_text = generate_with_fallback(
+            prompt,
+            response_mime_type="application/json",
+            response_schema={
+                "type": "OBJECT",
+                "properties": {
+                    "search_queries": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"}
                     },
-                    "required": ["search_queries", "previously_recommended_ids"]
-                }
-            )
+                    "previously_recommended_ids": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"}
+                    }
+                },
+                "required": ["search_queries", "previously_recommended_ids"]
+            },
         )
-        res = json.loads(response.text)
+        res = json.loads(response_text)
         queries = res.get("search_queries", [])
         prev_ids = res.get("previously_recommended_ids", [])
         return queries, prev_ids
     except Exception as e:
-        print(f"Error extracting context: {e}")
+        logger.error("Error extracting context: %s", e)
         return [messages[-1]["content"]], []
+
 
 def get_candidates(queries: list[str], prev_ids_or_names: list[str]) -> list[CatalogRecord]:
     index = get_index()
@@ -176,6 +117,7 @@ def get_candidates(queries: list[str], prev_ids_or_names: list[str]) -> list[Cat
                             
     return candidates
 
+
 def format_candidates(candidates: list[CatalogRecord]) -> str:
     parts = []
     for rec in candidates:
@@ -195,6 +137,7 @@ def format_candidates(candidates: list[CatalogRecord]) -> str:
         )
     return "\n".join(parts)
 
+
 def generate_response(messages: list[dict]) -> tuple[str, list[dict], bool]:
     # Count assistant turns to enforce turn cap
     assistant_turns = sum(1 for m in messages if m["role"] == "assistant")
@@ -208,7 +151,7 @@ def generate_response(messages: list[dict]) -> tuple[str, list[dict], bool]:
     candidates = get_candidates(queries, prev_items)
     candidates_str = format_candidates(candidates)
     
-    # 3. Call main Gemini model for routing & recommendation
+    # 3. Call main LLM for routing & recommendation
     convo = ""
     for msg in messages:
         convo += f"{msg['role'].upper()}: {msg['content']}\n"
@@ -280,35 +223,31 @@ Follow these strict rules in priority order:
 """
 
     try:
-        client = get_client()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "reply": {"type": "STRING"},
-                        "end_of_conversation": {"type": "BOOLEAN"},
-                        "recommendations": {
-                            "type": "ARRAY",
-                            "items": {
-                                "type": "OBJECT",
-                                "properties": {
-                                    "entity_id": {"type": "STRING"}
-                                },
-                                "required": ["entity_id"]
-                            }
+        response_text = generate_with_fallback(
+            prompt,
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_schema={
+                "type": "OBJECT",
+                "properties": {
+                    "reply": {"type": "STRING"},
+                    "end_of_conversation": {"type": "BOOLEAN"},
+                    "recommendations": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "entity_id": {"type": "STRING"}
+                            },
+                            "required": ["entity_id"]
                         }
-                    },
-                    "required": ["reply", "end_of_conversation", "recommendations"]
-                }
-            )
+                    }
+                },
+                "required": ["reply", "end_of_conversation", "recommendations"]
+            },
         )
         
-        res = json.loads(response.text)
+        res = json.loads(response_text)
         reply = res.get("reply", "")
         end_of_conversation = res.get("end_of_conversation", False)
         rec_items = res.get("recommendations", [])
@@ -328,6 +267,5 @@ Follow these strict rules in priority order:
                 
         return reply, recommendations, end_of_conversation
     except Exception as e:
-        print(f"Error generating response: {e}")
+        logger.error("Error generating response: %s", e)
         return "Sorry, I encountered an error while processing your request. Please try again.", [], False
-
