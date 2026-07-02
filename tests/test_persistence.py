@@ -3,6 +3,7 @@ Verifies CatalogIndex.save() / the read-back half of .load() produce
 identical search results before and after a disk round-trip. Uses the
 same fake deterministic embedder so this runs without network access.
 """
+
 import hashlib
 import json
 import shutil
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(project_root) / "app"))
 
 # Set dummy key for offline testing so genai.Client() doesn't fail on import
 import os
+
 os.environ["GOOGLE_API_KEY"] = "mock-key-for-testing"
 
 from unittest.mock import MagicMock
@@ -57,15 +59,15 @@ def mock_embed_content(model, contents, config=None):
     else:
         texts = contents
     vecs = fake_encode(texts)
-    
+
     class MockEmbedding:
         def __init__(self, values):
             self.values = values.tolist()
-            
+
     class MockResponse:
         def __init__(self, embeddings):
             self.embeddings = embeddings
-            
+
     return MockResponse([MockEmbedding(v) for v in vecs])
 
 
@@ -81,7 +83,9 @@ def main():
     with open(catalog_path, encoding="utf-8") as f:
         raw = json.load(f)
     records = [classify(CatalogRecord(**r)) for r in raw]
-    recommendable = [r for r in records if not r.is_job_solution and not r.is_report_only]
+    recommendable = [
+        r for r in records if not r.is_job_solution and not r.is_report_only
+    ]
 
     texts = [f"{r.name} | {r.description} | {', '.join(r.keys)}" for r in recommendable]
     embeddings = fake_encode(texts)
@@ -90,7 +94,7 @@ def main():
 
     original = CatalogIndex(records=recommendable, index=faiss_index)
 
-    query_text = recommendable[3].name 
+    query_text = recommendable[3].name
     before = original.query(query_text, top_k=3)
     print("Results BEFORE save:")
     for r in before:
@@ -108,9 +112,12 @@ def main():
         loaded_raw = json.load(f)
     loaded_records = [CatalogRecord(**r) for r in loaded_raw]
 
-    assert loaded_index.ntotal == len(loaded_records), "index/records count mismatch after reload"
-    assert [r.entity_id for r in loaded_records] == [r.entity_id for r in recommendable], \
-        "record order changed across save/load"
+    assert loaded_index.ntotal == len(
+        loaded_records
+    ), "index/records count mismatch after reload"
+    assert [r.entity_id for r in loaded_records] == [
+        r.entity_id for r in recommendable
+    ], "record order changed across save/load"
 
     reloaded = CatalogIndex(records=loaded_records, index=loaded_index)
     after = reloaded.query(query_text, top_k=3)
@@ -118,10 +125,12 @@ def main():
     for r in after:
         print(f"  {r.score:.4f}  {r.record.name}")
 
-    assert [r.record.entity_id for r in before] == [r.record.entity_id for r in after], \
-        "FAIL: results differ before vs after round-trip"
-    assert [round(r.score, 6) for r in before] == [round(r.score, 6) for r in after], \
-        "FAIL: scores differ before vs after round-trip"
+    assert [r.record.entity_id for r in before] == [
+        r.record.entity_id for r in after
+    ], "FAIL: results differ before vs after round-trip"
+    assert [round(r.score, 6) for r in before] == [
+        round(r.score, 6) for r in after
+    ], "FAIL: scores differ before vs after round-trip"
 
     print("\nPASS: save/load round-trip preserves index and results exactly.")
     print("NOTE: the real Gemini embed_content API call was mocked to run offline.")

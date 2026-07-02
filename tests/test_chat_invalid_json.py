@@ -5,7 +5,9 @@ from fastapi.testclient import TestClient
 def test_chat_accepts_newlines_inside_message_content(monkeypatch):
     client = TestClient(main_module.app)
 
-    monkeypatch.setattr(main_module, "generate_response", lambda messages: ("ok", [], False))
+    monkeypatch.setattr(
+        main_module, "generate_response", lambda messages: ("ok", [], False)
+    )
 
     body = b'{"conversation_id":"abc","messages":[{"role":"user","content":"Hello\nworld"}]}'
 

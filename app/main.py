@@ -3,6 +3,7 @@ from __future__ import annotations
 try:
     from dotenv import load_dotenv
     from pathlib import Path
+
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 except ImportError:
     pass
@@ -22,14 +23,13 @@ def health() -> dict[str, str]:
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
     messages = [m.model_dump() for m in request.messages]
-
     reply, recommendations, end = generate_response(messages)
-
     return ChatResponse(
         reply=reply,
         recommendations=recommendations,
         end_of_conversation=end,
     )
+
 
 @app.middleware("http")
 async def log_raw_body(request, call_next):
