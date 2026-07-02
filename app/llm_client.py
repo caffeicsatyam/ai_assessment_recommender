@@ -109,6 +109,61 @@ def _call_groq(
         return resp.json()["choices"][0]["message"]["content"]
 
 
+def _call_groq2(
+    prompt: str,
+    system_instruction: str | None = None,
+    response_schema: dict | None = None,
+) -> str:
+    """
+    Call Groq's OpenAI-compatible API and return the raw assistant
+    content string.  If a response_schema is supplied we ask the model
+    to output JSON matching that schema via the system prompt.
+    """
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    if not groq_api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY environment variable is not set — "
+            "cannot fall back to Groq."
+        )
+
+    messages: list[dict] = []
+
+    # Build system message
+    sys_parts: list[str] = []
+    if system_instruction:
+        sys_parts.append(system_instruction)
+    if response_schema:
+        sys_parts.append(
+            "You MUST respond with valid JSON only, matching this schema:\n"
+            + json.dumps(response_schema, indent=2)
+        )
+    if sys_parts:
+        messages.append({"role": "system", "content": "\n\n".join(sys_parts)})
+
+    messages.append({"role": "user", "content": prompt})
+
+    payload: dict = {
+        "model": _GROQ_MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+    }
+    if response_schema:
+        payload["response_format"] = {"type": "json_object"}
+
+    with httpx.Client(timeout=60.0) as http_client:
+        resp = http_client.post(
+            _GROQ_API_URL,
+            headers={
+                "Authorization": f"Bearer {groq_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
+
 # ---------------------------------------------------------------------------
 # Public API: generate_with_fallback
 # ---------------------------------------------------------------------------
@@ -127,7 +182,6 @@ def generate_with_fallback(
     Returns the raw text content of the LLM response (typically JSON when
     a response_schema is provided).
     """
-    # --- Attempt 1: Gemini ---
     try:
         client = get_gemini_client()
         config_kwargs: dict = {}
@@ -154,7 +208,6 @@ def generate_with_fallback(
             gemini_model, gemini_err, _GROQ_MODEL,
         )
 
-    # --- Attempt 2: Groq fallback ---
     try:
         result = _call_groq(
             prompt,
@@ -162,6 +215,22 @@ def generate_with_fallback(
             response_schema=response_schema,
         )
         logger.info("Groq (%s) responded successfully (fallback).", _GROQ_MODEL)
+        return result
+
+    except Exception as groq_err:
+        logger.error(
+            "Both Gemini and Groq failed. Gemini error: %s | Groq error: %s",
+            gemini_err, groq_err,
+        )
+        raise gemini_err from groq_err
+
+    try:
+        result = _call_groq2(
+            prompt,
+            system_instruction=system_instruction,
+            response_schema=response_schema
+        )
+        logger.info("Groq (%s) responded successfully (fallback).", _GROQ_MODEL2)
         return result
 
     except Exception as groq_err:
