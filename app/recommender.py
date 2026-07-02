@@ -187,9 +187,8 @@ def generate_response(messages: list[dict]) -> tuple[str, list[dict], bool]:
             - A list of recommended product dictionaries.
             - A boolean indicating if the conversation has ended.
     """
-    assistant_turns = sum(1 for m in messages if m["role"] == "assistant")
-    user_turns = sum(1 for m in messages if m["role"] == "user")
-    current_turn = assistant_turns + 1
+    total_turns_before_this = len(messages)
+    current_turn = total_turns_before_this + 1
     queries, prev_items = extract_context(messages)
     candidates = get_candidates(queries, prev_items)
     candidates_str = format_candidates(candidates)
@@ -199,7 +198,7 @@ def generate_response(messages: list[dict]) -> tuple[str, list[dict], bool]:
     is_final_turn = current_turn >= 8
     system_instruction = f"""You are an expert AI recruiting and assessment coordinator recommending assessments from the SHL product catalog.
 Your goal is to build a shortlist of 1 to 10 assessments matching the hiring manager's requirements.
-Current assistant turn number: {current_turn} of 8 maximum.
+Current conversation turn number: {current_turn} of 8 maximum.
 Follow these strict rules in priority order:
 0. OFF-TOPIC RULE (HIGHEST PRIORITY):
    - You ONLY help with recommending SHL talent assessments and skills evaluation products.
@@ -222,7 +221,7 @@ Follow these strict rules in priority order:
    - If the user asks to compare products (e.g., "What is the difference between X and Y?"), provide a grounded answer drawn ONLY from the provided catalog data (Candidate Products).
    - Do NOT use prior knowledge outside the provided catalog data to compare assessments.
 4. TURN CAP RULE:
-   - You have a maximum of 8 assistant turns for the entire conversation.
+   - The conversation has a strict maximum of 8 turns total (including user and assistant).
    - Current turn: {current_turn}/8.
    - If this is turn 7 or 8: you MUST provide your best shortlist of recommendations based on whatever information you have so far. Do NOT ask more clarifying questions. Set `end_of_conversation` to `true` if this is turn 8.
    - {"THIS IS THE FINAL TURN (turn 8). You MUST output your best recommendation shortlist NOW and set end_of_conversation to true. Do NOT ask questions." if is_final_turn else ""}
@@ -282,8 +281,13 @@ Follow these strict rules in priority order:
                 rec_record = catalog[eid]
                 rec_dict = make_recommendation(rec_record)
                 recommendations.append(rec_dict)
+
+        # Strictly enforce the maximum of 10 recommendations
+        recommendations = recommendations[:10]
+
         if is_final_turn:
             end_of_conversation = True
+
         return reply, recommendations, end_of_conversation
     except Exception as e:
         logger.error("Error generating response: %s", e)
