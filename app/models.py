@@ -6,7 +6,7 @@ from typing import List, Literal, Optional
 class Message(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
-
+    recommendations: Optional[List[dict]] = None
 
 class ChatRequest(BaseModel):
     messages: List[Message]
