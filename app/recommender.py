@@ -45,6 +45,7 @@ Based on the conversation history below, do the following:
      * "Data Scientist" → ["Python data analysis", "machine learning", "statistics", "SQL", "problem solving"]
    - Always include the level as a qualifier (e.g., "advanced", "senior", "graduate") in at least one query.
    - Include both technical skills and soft skill assessments appropriate for the role level.
+   - Keep queries specific to the job domain. Avoid generic business terms (e.g., "risk management", "communication") that could match unrelated fields.
 
 2. Identify and extract the exact `entity_id` or product names of any SHL assessments that were recommended/shortlisted by the assistant in the previous turns.
 
@@ -88,9 +89,17 @@ def get_candidates(queries: list[str], prev_ids_or_names: list[str]) -> list[Cat
     catalog = get_catalog()
     catalog_by_name = get_catalog_by_name()
     
-    # 1. Fetch from search queries
-    results = index.multi_query(queries, top_k_each=15)
+    # 1. Fetch from search queries (hybrid: semantic + keyword via RRF)
+    results = index.hybrid_multi_query(queries, top_k_each=15)
     candidates = [r.record for r in results]
+
+    # Log retrieved candidates and their scores for debugging
+    if results:
+        logger.info(
+            "Retrieved %d candidates. Top scores: %s",
+            len(results),
+            [(r.record.name, round(r.score, 3)) for r in results[:10]],
+        )
     
     candidate_ids = {rec.entity_id for rec in candidates}
     for item in prev_ids_or_names:
@@ -181,6 +190,7 @@ Follow these strict rules in priority order:
 2. SHORTLIST SELECTION RULE:
    - When you have enough context, select a list of 1 to 10 appropriate assessments from the Candidate Products list.
    - You can ONLY recommend products that are explicitly listed in the Candidate Products. Do not hallucinate product names or IDs.
+   - STRICT RELEVANCE FILTER: You must independently evaluate each candidate product's relevance to the role. Do NOT recommend a product just because it appears in the Candidate Products list. If a product is clearly irrelevant (e.g., recommending a Cyber Security test for a Chemical Engineer), you MUST exclude it.
    - ALWAYS match the seniority/job level: each Candidate Product has a "Job Levels" field. Prefer products whose Job Levels match the user's requested level (e.g., if they ask for a "Senior" or "Manager" role, prefer products listed for "Mid-Professional", "Manager", or "Director" levels). For graduate/entry roles prefer "Entry-Level" or "Graduate" products.
    - STRICTLY honor user edits: if the user asks to add a product, add it to the existing list. If the user asks to drop/remove a product, remove ONLY that product and keep all others unchanged. If the user asks to replace a product, remove the old one and add the new one.
    - When the user asks for modifications, always carry forward the full previous shortlist with only the requested changes applied.

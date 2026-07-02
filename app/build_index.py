@@ -20,9 +20,15 @@ try:
 except ImportError:
     pass
 
-from .models import CatalogRecord
-from .retrieval import CatalogIndex
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+try:
+    from app.models import CatalogRecord
+    from app.retrieval import CatalogIndex
+except ImportError:
+    from .models import CatalogRecord
+    from .retrieval import CatalogIndex
 
 def main():
     if len(sys.argv) != 3:

@@ -53,6 +53,7 @@ def get_gemini_client() -> genai.Client:
 # ---------------------------------------------------------------------------
 _GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 _GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+_GROQ_MODEL2 = "qwen/qwen3-32b"
 
 
 def _call_groq(
@@ -143,7 +144,7 @@ def _call_groq2(
     messages.append({"role": "user", "content": prompt})
 
     payload: dict = {
-        "model": _GROQ_MODEL,
+        "model": _GROQ_MODEL2,
         "messages": messages,
         "temperature": 0.7,
     }
@@ -177,11 +178,15 @@ def generate_with_fallback(
     gemini_model: str = "gemini-2.5-flash",
 ) -> str:
     """
-    Try Gemini first; on ANY failure fall back to Groq.
+    Try Gemini first; on failure fall back to Groq model 1, then Groq model 2.
 
     Returns the raw text content of the LLM response (typically JSON when
     a response_schema is provided).
     """
+    gemini_err = None
+    groq1_err = None
+
+    # --- Attempt 1: Gemini ---
     try:
         client = get_gemini_client()
         config_kwargs: dict = {}
@@ -202,40 +207,43 @@ def generate_with_fallback(
         logger.info("Gemini (%s) responded successfully.", gemini_model)
         return response.text
 
-    except Exception as gemini_err:
+    except Exception as e:
+        gemini_err = e
         logger.warning(
             "Gemini (%s) failed: %s — falling back to Groq (%s).",
-            gemini_model, gemini_err, _GROQ_MODEL,
+            gemini_model, e, _GROQ_MODEL,
         )
 
+    # --- Attempt 2: Groq model 1 ---
     try:
         result = _call_groq(
             prompt,
             system_instruction=system_instruction,
             response_schema=response_schema,
         )
-        logger.info("Groq (%s) responded successfully (fallback).", _GROQ_MODEL)
+        logger.info("Groq (%s) responded successfully (fallback 1).", _GROQ_MODEL)
         return result
 
-    except Exception as groq_err:
-        logger.error(
-            "Both Gemini and Groq failed. Gemini error: %s | Groq error: %s",
-            gemini_err, groq_err,
+    except Exception as e:
+        groq1_err = e
+        logger.warning(
+            "Groq (%s) also failed: %s — falling back to Groq (%s).",
+            _GROQ_MODEL, e, _GROQ_MODEL2,
         )
-        raise gemini_err from groq_err
 
+    # --- Attempt 3: Groq model 2 ---
     try:
         result = _call_groq2(
             prompt,
             system_instruction=system_instruction,
-            response_schema=response_schema
+            response_schema=response_schema,
         )
-        logger.info("Groq (%s) responded successfully (fallback).", _GROQ_MODEL2)
+        logger.info("Groq (%s) responded successfully (fallback 2).", _GROQ_MODEL2)
         return result
 
-    except Exception as groq_err:
+    except Exception as groq2_err:
         logger.error(
-            "Both Gemini and Groq failed. Gemini error: %s | Groq error: %s",
-            gemini_err, groq_err,
+            "All LLMs failed. Gemini: %s | Groq1: %s | Groq2: %s",
+            gemini_err, groq1_err, groq2_err,
         )
-        raise gemini_err from groq_err
+        raise gemini_err from groq2_err

@@ -1,9 +1,16 @@
 import json
+import os
 import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from collections import Counter
 
-from .models import CatalogRecord
-from .classify import classify
+try:
+    from app.models import CatalogRecord
+    from app.classify import classify
+except ImportError:
+    from .models import CatalogRecord
+    from .classify import classify
 
 
 def main():
