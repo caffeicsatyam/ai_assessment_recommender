@@ -54,14 +54,17 @@ Based on the conversation history below, do the following:
      * "Entry-level sales rep" → ["verbal communication", "customer service", "numerical reasoning", "personality sales"]
      * "Data Scientist" → ["Python data analysis", "machine learning", "statistics", "SQL", "problem solving"]
    - Always include the level as a qualifier (e.g., "advanced", "senior", "graduate") in at least one query.
-   - Include both technical skills and soft skill assessments appropriate for the role level.
+   - Include both *technical skills* and *soft skill* assessments appropriate for the role level.
    - Keep queries specific to the job domain. Avoid generic business terms (e.g., "risk management", "communication") that could match unrelated fields.
-2. Identify and extract the exact `entity_id` or product names of any SHL assessments that were recommended/shortlisted by the assistant in the previous turns.
+2. Identify the exact product names currently on the shortlist.
+   - FIRST, look for a [CURRENT_SHORTLIST] ... [/CURRENT_SHORTLIST] block in the MOST RECENT assistant message. If found, extract every product name listed there — these are the authoritative current shortlist entries.
+   - If no such block exists, fall back to inferring from the assistant's prose.
+   - Dont add the extra or new Assessment when user ask for replace or remove product.
 Conversation:
 {convo}
 Output as JSON with keys:
 - "search_queries": list of strings (role-expanded queries for searching catalog)
-- "previously_recommended_ids": list of strings (entity_ids or names of previously recommended products)
+- "previously_recommended_ids": list of strings (exact product names from the current shortlist)
 """
     try:
         response_text = generate_with_fallback(
@@ -217,18 +220,26 @@ Follow these strict rules in priority order:
    - ALWAYS match the seniority/job level: each Candidate Product has a "Job Levels" field. Prefer products whose Job Levels match the user's requested level (e.g., if they ask for a "Senior" or "Manager" role, prefer products listed for "Mid-Professional", "Manager", or "Director" levels). For graduate/entry roles prefer "Entry-Level" or "Graduate" products.
    - STRICTLY honor user edits: if the user asks to add a product, add it to the existing list. If the user asks to drop/remove a product, remove ONLY that product and keep all others unchanged. If the user asks to replace a product, remove the old one and add the new one.
    - When the user asks for modifications, always carry forward the full previous shortlist with only the requested changes applied.
-3. COMPARE RULE:
+   - CURRENT SHORTLIST TRACKING: The most recent assistant message may contain a [CURRENT_SHORTLIST] ... [/CURRENT_SHORTLIST] block listing the exact products currently recommended. Use this as the authoritative record of the shortlist when applying edits.
+3. DEFEND RULE:
+   - If the user asks to replace or remove a product and there is genuinely NO suitable alternative in the Candidate Products (i.e., every other candidate is clearly irrelevant or a worse fit for the role/level), you MUST:
+     * Keep the original shortlist unchanged (do not substitute an irrelevant product).
+     * If user ask for replace or remove please DONT add extra Assessments.(Strictly Follow)
+     * Explain clearly WHY the product is the best available choice and acknowledge the concern (e.g., length).
+     * Set `end_of_conversation` to `false` so the user can decide.
+    
+4. COMPARE RULE:
    - If the user asks to compare products (e.g., "What is the difference between X and Y?"), provide a grounded answer drawn ONLY from the provided catalog data (Candidate Products).
    - Do NOT use prior knowledge outside the provided catalog data to compare assessments.
-4. TURN CAP RULE:
+5. TURN CAP RULE:
    - The conversation has a strict maximum of 8 turns total (including user and assistant).
    - Current turn: {current_turn}/8.
    - If this is turn 7 or 8: you MUST provide your best shortlist of recommendations based on whatever information you have so far. Do NOT ask more clarifying questions. Set `end_of_conversation` to `true` if this is turn 8.
    - {"THIS IS THE FINAL TURN (turn 8). You MUST output your best recommendation shortlist NOW and set end_of_conversation to true. Do NOT ask questions." if is_final_turn else ""}
-5. CONVERSATION END RULE:
+6. CONVERSATION END RULE:
    - When the user confirms they are satisfied with the shortlist (e.g., "Perfect", "That works", "Confirmed", "Locking it in"), set `end_of_conversation` to `true` and output the final shortlist.
    - Otherwise, set `end_of_conversation` to `false` (unless forced by turn cap).
-6. OUTPUT FORMAT:
+7. OUTPUT FORMAT:
    - You must output valid JSON matching the schema below.
    - Do NOT include markdown tables in your conversational `reply` text. Keep the `reply` conversational.
 """
