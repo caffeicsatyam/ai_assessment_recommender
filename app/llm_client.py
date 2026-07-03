@@ -22,7 +22,10 @@ def get_gemini_client() -> genai.Client:
                 api_key = os.environ.get("GOOGLE_API_KEY")
             except ImportError:
                 pass
-        _gemini_client = genai.Client(api_key=api_key)
+        _gemini_client = genai.Client(
+            api_key=api_key,
+            http_options={"timeout": 12_000},
+        )
     return _gemini_client
 
 
@@ -63,7 +66,7 @@ def _call_groq(
     }
     if response_schema:
         payload["response_format"] = {"type": "json_object"}
-    with httpx.Client(timeout=60.0) as http_client:
+    with httpx.Client(timeout=10.0) as http_client:
         resp = http_client.post(
             _GROQ_API_URL,
             headers={
@@ -107,7 +110,7 @@ def _call_groq2(
     }
     if response_schema:
         payload["response_format"] = {"type": "json_object"}
-    with httpx.Client(timeout=60.0) as http_client:
+    with httpx.Client(timeout=10.0) as http_client:
         resp = http_client.post(
             _GROQ_API_URL,
             headers={

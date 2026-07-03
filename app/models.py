@@ -4,7 +4,7 @@ from typing import List, Literal, Optional
 
 
 class Message(BaseModel):
-    role: Literal["system", "user", "assistant"]
+    role: Literal["user", "assistant"] = "user"
     content: str
 
 
